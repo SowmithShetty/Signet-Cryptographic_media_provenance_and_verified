@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useEffect } from 'react';
 import {
   ReactFlow,
   Background,
@@ -332,23 +332,28 @@ const NODE_GAP = 120;
 function buildGraph(editActions) {
   const total = editActions.length;
 
-  const nodes = editActions.map((action, index) => ({
-    id: action.id,
-    type: 'forensicAction',
-    position: {
-      x: index * (NODE_WIDTH + NODE_GAP),
-      y: 0,
-    },
-    data: { action, index, total },
-    draggable: true,
-  }));
+  const nodes = editActions.map((action, index) => {
+    const nodeId = action.id || action._id || action.hash || `node-${index}`;
+    return {
+      id: nodeId,
+      type: 'forensicAction',
+      position: {
+        x: index * (NODE_WIDTH + NODE_GAP),
+        y: 0,
+      },
+      data: { action, index, total },
+      draggable: true,
+    };
+  });
 
   const edges = [];
   for (let i = 0; i < editActions.length - 1; i++) {
+    const sourceId = editActions[i].id || editActions[i]._id || editActions[i].hash || `node-${i}`;
+    const targetId = editActions[i + 1].id || editActions[i + 1]._id || editActions[i + 1].hash || `node-${i + 1}`;
     edges.push({
-      id: `edge-${editActions[i].id}-${editActions[i + 1].id}`,
-      source: editActions[i].id,
-      target: editActions[i + 1].id,
+      id: `edge-${sourceId}-${targetId}`,
+      source: sourceId,
+      target: targetId,
       type: 'animatedNeon',
       data: { targetValid: editActions[i + 1].signatureValid },
     });
@@ -363,8 +368,14 @@ export default function ProvenanceTimeline({ editActions = MOCK_EDIT_ACTIONS }) 
     [editActions]
   );
 
-  const [nodes, , onNodesChange] = useNodesState(initialNodes);
-  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+  // Sync state if initialNodes/initialEdges change without unmounting
+  useEffect(() => {
+    setNodes(initialNodes);
+    setEdges(initialEdges);
+  }, [initialNodes, initialEdges, setNodes, setEdges]);
 
   const onInit = useCallback((reactFlowInstance) => {
     // Fit view with padding after mount
@@ -372,6 +383,7 @@ export default function ProvenanceTimeline({ editActions = MOCK_EDIT_ACTIONS }) 
       reactFlowInstance.fitView({ padding: 0.3, duration: 600 });
     }, 100);
   }, []);
+
 
   return (
     <div id="provenance-timeline" className="w-full animate-fade-in-up">

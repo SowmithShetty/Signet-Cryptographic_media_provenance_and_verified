@@ -1,14 +1,22 @@
 import FileDropzone from '../components/FileDropzone';
 import { Activity, FileCheck2, ShieldAlert, Clock } from 'lucide-react';
-
-const stats = [
-  { label: 'Files Analyzed', value: '0', icon: FileCheck2, accent: false },
-  { label: 'Threats Found', value: '0', icon: ShieldAlert, accent: false },
-  { label: 'Avg. Process Time', value: '—', icon: Clock, accent: false },
-  { label: 'Integrity Score', value: '—', icon: Activity, accent: true },
-];
+import { useValidation } from '../context/ValidationContext';
 
 export default function IngestPage() {
+  const { addValidation, stats: liveStats } = useValidation();
+
+  // Compute live integrity score (percentage of files that are NOT tampered/invalid)
+  const integrityScore = liveStats.total > 0
+    ? `${Math.round(((liveStats.total - liveStats.invalid) / liveStats.total) * 100)}%`
+    : '100%';
+
+  const stats = [
+    { label: 'Files Analyzed', value: String(liveStats.total), icon: FileCheck2, accent: false },
+    { label: 'Threats Found', value: String(liveStats.invalid), icon: ShieldAlert, accent: liveStats.invalid > 0, isThreat: liveStats.invalid > 0 },
+    { label: 'Analysis Engine', value: liveStats.total > 0 ? 'WASM+Node' : '—', icon: Clock, accent: false },
+    { label: 'Integrity Score', value: integrityScore, icon: Activity, accent: true },
+  ];
+
   return (
     <div className="animate-fade-in-up">
       {/* ── Stats Row ────────────────────────────────── */}
@@ -19,9 +27,9 @@ export default function IngestPage() {
             className="glass-panel rounded-lg p-4 hover:border-[var(--color-ash)] transition-all duration-200"
           >
             <div className="flex items-center justify-between mb-2">
-              <stat.icon className={`w-4 h-4 ${stat.accent ? 'text-[var(--color-neon)]' : 'text-[var(--color-slate-dim)]'}`} />
+              <stat.icon className={`w-4 h-4 ${stat.isThreat ? 'text-[var(--color-threat)]' : stat.accent ? 'text-[var(--color-neon)]' : 'text-[var(--color-slate-dim)]'}`} />
               <span
-                className={`text-lg font-bold ${stat.accent ? 'neon-text' : 'text-white'}`}
+                className={`text-lg font-bold ${stat.isThreat ? 'text-[var(--color-threat)]' : stat.accent ? 'neon-text' : 'text-white'}`}
                 style={{ fontFamily: 'var(--font-mono)' }}
               >
                 {stat.value}
@@ -35,7 +43,7 @@ export default function IngestPage() {
       </div>
 
       {/* ── File Dropzone ────────────────────────────── */}
-      <FileDropzone />
+      <FileDropzone onValidationComplete={addValidation} />
 
       {/* ── Footer Info ──────────────────────────────── */}
       <div className="mt-8 text-center">
@@ -48,3 +56,4 @@ export default function IngestPage() {
     </div>
   );
 }
+
