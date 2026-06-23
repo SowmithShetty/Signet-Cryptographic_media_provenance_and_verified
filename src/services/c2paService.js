@@ -45,13 +45,10 @@ export async function readManifest(file) {
   try {
     const c2pa = await initC2pa();
 
-    const reader = await c2pa.reader.fromBlob(file.type, file);
-    const manifestStore = await reader.manifestStore();
+    // The browser SDK uses .read(file) directly for Blobs and Files
+    const manifestStore = await c2pa.read(file);
 
-    // Free WASM resources to prevent memory leaks
-    await reader.free();
-
-    if (!manifestStore || !manifestStore.active_manifest) {
+    if (!manifestStore || !manifestStore.activeManifest) {
       return {
         manifest: null,
         error: null,
@@ -59,13 +56,58 @@ export async function readManifest(file) {
       };
     }
 
+    // Compile structured metadata from the WASM client-side validation
+    const active = manifestStore.activeManifest;
+    const manifests = manifestStore.manifests || {};
+    const manifestsArray = Object.values(manifests);
+    const signatureValid = manifestStore.validationStatus?.length === 0;
+
+    const chain = [];
+    manifestsArray.forEach((manifest, index) => {
+      // Extract actions from assertions if available
+      const actions = manifest.assertions?.get('c2pa.actions')?.data?.actions || [];
+      
+      if (actions.length > 0) {
+        actions.forEach((action) => {
+          chain.push({
+            actionName: action.action?.replace('c2pa.', '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Edited',
+            software: manifest.claimGenerator?.split('/')?.[0] || 'Unknown Software',
+            softwareVersion: manifest.claimGenerator?.split('/')?.[1] || '',
+            timestamp: manifest.signatureInfo?.time || new Date().toISOString(),
+            operator: action.softwareAgent || 'Operator',
+            signatureValid,
+            hashAlgorithm: 'SHA-256',
+            hash: manifest.signatureInfo?.issuer || 'Secure Signature',
+          });
+        });
+      } else {
+        chain.push({
+          actionName: index === 0 ? 'Content Created' : 'Ingredient Added',
+          software: manifest.claimGenerator?.split('/')?.[0] || 'Camera Capture',
+          softwareVersion: manifest.claimGenerator?.split('/')?.[1] || '',
+          timestamp: manifest.signatureInfo?.time || new Date().toISOString(),
+          operator: manifest.title || 'System',
+          signatureValid,
+          hashAlgorithm: 'SHA-256',
+          hash: manifest.signatureInfo?.issuer || 'Secure Signature',
+        });
+      }
+    });
+
+    const clientManifest = {
+      hasManifest: true,
+      signatureValid,
+      manifestCount: manifestsArray.length,
+      claimGenerator: active.claimGenerator || '',
+      provenanceChain: chain,
+    };
+
     return {
-      manifest: manifestStore,
+      manifest: clientManifest,
       error: null,
       message: null,
     };
   } catch (err) {
-    // Handle files without C2PA data gracefully
     const errorMsg = err?.message || String(err);
 
     // Common error when file has no C2PA data

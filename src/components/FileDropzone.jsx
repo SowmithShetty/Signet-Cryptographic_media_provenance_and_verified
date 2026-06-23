@@ -142,9 +142,9 @@ export default function FileDropzone({ onValidationComplete }) {
 
       // ── Phase 2: Server-side signature verification ──
       try {
-        updateFile(id, { status: clientManifest ? 'validating' : 'validating' });
+        updateFile(id, { status: 'validating' });
 
-        const serverResult = await validateFile(file, simulationMode);
+        const serverResult = await validateFile(file, simulationMode, clientManifest);
 
         if (serverResult.hasManifest) {
           updateFile(id, {

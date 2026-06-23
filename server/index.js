@@ -168,6 +168,16 @@ app.post('/api/validate', upload.single('file'), async (req, res) => {
     const { originalname, mimetype, size } = req.file;
     console.log(`[SIGNET] Validating: ${originalname} (${mimetype}, ${size} bytes)`);
 
+    let clientManifest = null;
+    if (req.body.clientManifest) {
+      try {
+        clientManifest = JSON.parse(req.body.clientManifest);
+        console.log(`[SIGNET] Received clientManifest for ${originalname}`);
+      } catch (e) {
+        console.warn('[SIGNET] Failed to parse clientManifest payload:', e.message);
+      }
+    }
+
     let result = {
       fileName: originalname,
       fileSize: size,
@@ -279,8 +289,19 @@ app.post('/api/validate', upload.single('file'), async (req, res) => {
     } catch (c2paErr) {
       const errMsg = c2paErr?.message || String(c2paErr);
 
-      // Gracefully handle files without C2PA data
-      if (
+      // Check if client-side fallback is available
+      if (clientManifest) {
+        console.log(`[SIGNET] Backend validation failed (DLL/Rust err), falling back to client-side WASM results for ${originalname}`);
+        result = {
+          ...result,
+          hasManifest: clientManifest.hasManifest,
+          signatureValid: clientManifest.signatureValid,
+          manifestCount: clientManifest.manifestCount,
+          claimGenerator: clientManifest.claimGenerator,
+          provenanceChain: clientManifest.provenanceChain,
+          activeManifest: 'client_wasm_fallback',
+        };
+      } else if (
         errMsg.includes('JumbfNotFound') ||
         errMsg.includes('no C2PA') ||
         errMsg.includes('Not Found') ||

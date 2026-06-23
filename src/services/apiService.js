@@ -9,11 +9,16 @@ const API_BASE = '/api';
  *
  * @param {File} file - The file to validate
  * @param {boolean} simulate - Whether to simulate C2PA metadata (Developer Mode)
+ * @param {object|null} clientManifest - Extracted client-side manifest metadata to use as backend fallback
  * @returns {Promise<object>} Validation result from the server
  */
-export async function validateFile(file, simulate = false) {
+export async function validateFile(file, simulate = false, clientManifest = null) {
   const formData = new FormData();
   formData.append('file', file);
+  
+  if (clientManifest) {
+    formData.append('clientManifest', JSON.stringify(clientManifest));
+  }
 
   const res = await fetch(`${API_BASE}/validate?simulate=${simulate}`, {
     method: 'POST',
