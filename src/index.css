@@ -182,3 +182,70 @@ body {
   background: var(--color-neon);
   box-shadow: 0 0 6px var(--color-neon-glow), 0 0 12px var(--color-neon-glow);
 }
+
+/* ── React Flow Overrides ────────────────────────────────────────── */
+
+.provenance-flow .react-flow__pane {
+  cursor: grab;
+}
+
+.provenance-flow .react-flow__node {
+  cursor: default;
+}
+
+/* Controls panel */
+.provenance-controls {
+  border: 1px solid var(--color-gunmetal) !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+}
+
+.provenance-controls .react-flow__controls-button {
+  background: var(--color-carbon) !important;
+  border: none !important;
+  border-bottom: 1px solid var(--color-gunmetal) !important;
+  color: var(--color-slate-dim) !important;
+  width: 28px !important;
+  height: 28px !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.15s ease !important;
+}
+
+.provenance-controls .react-flow__controls-button:hover {
+  background: var(--color-graphite) !important;
+  color: var(--color-neon) !important;
+}
+
+.provenance-controls .react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+.provenance-controls .react-flow__controls-button svg {
+  fill: currentColor !important;
+  max-width: 14px !important;
+  max-height: 14px !important;
+}
+
+/* Animated edge dash */
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -40;
+  }
+}
+
+.provenance-edge-animated {
+  animation: dash-flow 1.5s linear infinite;
+}
+
+/* Node wrapper hover lift */
+.provenance-node-wrapper {
+  transition: filter 0.3s ease;
+}
+
+.provenance-node-wrapper:hover {
+  filter: drop-shadow(0 0 16px var(--color-neon-glow));
+}
