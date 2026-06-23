@@ -2,6 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   Shield,
   Upload,
+  GitBranch,
   FileSearch,
   Activity,
   History,
@@ -16,6 +17,7 @@ const navSections = [
     label: 'OPERATIONS',
     items: [
       { to: '/', icon: Upload, label: 'Ingest', badge: null },
+      { to: '/provenance', icon: GitBranch, label: 'Provenance', badge: null },
       { to: '/analysis', icon: FileSearch, label: 'Analysis', badge: null },
       { to: '/monitoring', icon: Activity, label: 'Monitoring', badge: '3' },
     ],
