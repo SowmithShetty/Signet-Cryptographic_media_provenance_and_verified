@@ -15,7 +15,8 @@ import {
   Eye,
 } from 'lucide-react';
 import { readManifest } from '../services/c2paService';
-import { validateFile } from '../services/apiService';
+import { validateFile, validateSampleFile } from '../services/apiService';
+import { useValidation } from '../context/ValidationContext';
 
 const ACCEPTED_TYPES = {
   'image/jpeg': ['.jpg', '.jpeg'],
@@ -47,12 +48,64 @@ function getFileIcon(type) {
  */
 export default function FileDropzone({ onValidationComplete }) {
   const [files, setFiles] = useState([]);
+  const { simulationMode } = useValidation();
+  const [isIngestingSample, setIsIngestingSample] = useState(false);
 
   const updateFile = useCallback((id, updates) => {
     setFiles((prev) =>
       prev.map((f) => (f.id === id ? { ...f, ...updates } : f))
     );
   }, []);
+
+  const ingestSample = useCallback(async () => {
+    setIsIngestingSample(true);
+    const sampleId = crypto.randomUUID();
+    const tempSample = {
+      id: sampleId,
+      name: 'forensic_sample_loading.jpg',
+      size: 2405912,
+      type: 'image/jpeg',
+      hash: '',
+      status: 'validating',
+      timestamp: new Date().toISOString(),
+      error: null,
+      c2paMessage: 'Contacting server to ingest sample record...',
+      serverResult: null,
+    };
+    
+    setFiles((prev) => [...prev, tempSample]);
+
+    try {
+      const serverResult = await validateSampleFile();
+      
+      setFiles((prev) => prev.map((f) => f.id === sampleId ? {
+        ...f,
+        name: serverResult.fileName,
+        size: serverResult.fileSize,
+        type: serverResult.mimeType,
+        status: serverResult.signatureValid ? 'verified' : 'invalid',
+        hash: serverResult.provenanceChain?.[0]?.hash || '',
+        serverResult,
+        c2paMessage: serverResult.signatureValid
+          ? 'Sample C2PA evidence signature verified'
+          : 'Sample C2PA signature invalid (Simulated Tampering)',
+      } : f));
+
+      if (onValidationComplete) {
+        onValidationComplete(serverResult);
+      }
+    } catch (err) {
+      console.error('[SIGNET] Sample ingest failed:', err);
+      setFiles((prev) => prev.map((f) => f.id === sampleId ? {
+        ...f,
+        status: 'error',
+        error: `Sample ingestion failed: ${err.message}`,
+        c2paMessage: err.message,
+      } : f));
+    } finally {
+      setIsIngestingSample(false);
+    }
+  }, [onValidationComplete]);
 
   const processFile = useCallback(
     async (fileEntry) => {
@@ -91,7 +144,7 @@ export default function FileDropzone({ onValidationComplete }) {
       try {
         updateFile(id, { status: clientManifest ? 'validating' : 'validating' });
 
-        const serverResult = await validateFile(file);
+        const serverResult = await validateFile(file, simulationMode);
 
         if (serverResult.hasManifest) {
           updateFile(id, {
@@ -125,7 +178,7 @@ export default function FileDropzone({ onValidationComplete }) {
         });
       }
     },
-    [updateFile, onValidationComplete]
+    [updateFile, onValidationComplete, simulationMode]
   );
 
   const onDrop = useCallback(
@@ -279,10 +332,32 @@ export default function FileDropzone({ onValidationComplete }) {
                     browse your filesystem
                   </span>
                 </p>
+                
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    disabled={isIngestingSample}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      ingestSample();
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[var(--color-graphite)] border border-[var(--color-steel)] text-white text-[10px] font-bold tracking-wider hover:border-[var(--color-neon-dim)] hover:bg-[var(--color-steel)] transition-all cursor-pointer animate-pulse-neon"
+                    style={{ fontFamily: 'var(--font-mono)' }}
+                  >
+                    {isIngestingSample ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin text-[var(--color-neon)]" />
+                        INGESTING...
+                      </>
+                    ) : (
+                      '▶ INGEST SAMPLE EVIDENCE'
+                    )}
+                  </button>
+                </div>
               </div>
 
               {/* File type badges */}
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2 mt-1.5 justify-center">
                 {['.JPG', '.PNG', '.MP4'].map((ext) => (
                   <span
                     key={ext}

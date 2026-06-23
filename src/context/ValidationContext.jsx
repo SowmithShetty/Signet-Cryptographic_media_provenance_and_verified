@@ -28,6 +28,18 @@ export function ValidationProvider({ children }) {
     return () => { cancelled = true; };
   }, []);
 
+  const [simulationMode, setSimulationMode] = useState(() => {
+    return localStorage.getItem('signet_simulation_mode') === 'true';
+  });
+
+  const toggleSimulationMode = useCallback(() => {
+    setSimulationMode((prev) => {
+      const next = !prev;
+      localStorage.setItem('signet_simulation_mode', String(next));
+      return next;
+    });
+  }, []);
+
   // Add a new validation result (called after file upload completes)
   const addValidation = useCallback((result) => {
     setValidations((prev) => [result, ...prev]);
@@ -65,6 +77,8 @@ export function ValidationProvider({ children }) {
         stats,
         latestProvenanceChain,
         allProvenanceChains,
+        simulationMode,
+        toggleSimulationMode,
       }}
     >
       {children}

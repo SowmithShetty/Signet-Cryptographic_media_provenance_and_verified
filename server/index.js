@@ -4,11 +4,17 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
 import os from 'os';
+import mongoose from 'mongoose';
 import { connectDB } from './db.js';
 import ValidationRecord from './models/ValidationRecord.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Zero-config in-memory database fallback when local MongoDB service is unavailable
+const tempRecords = [];
+const isDbConnected = () => mongoose.connection.readyState === 1;
+
 
 // ── Middleware ────────────────────────────────────────────────────────
 app.use(cors());
@@ -178,46 +184,97 @@ app.post('/api/validate', upload.single('file'), async (req, res) => {
     };
 
     try {
-      // Dynamically import c2pa-node (native binary)
-      const { Reader } = await import('@contentauth/c2pa-node');
-
-      const reader = await Reader.fromAsset({
-        path: tmpPath,
-        mimeType: mimetype,
-      });
-
-      const manifestJson = reader.json();
-
-      if (manifestJson) {
-        const parsed = typeof manifestJson === 'string' ? JSON.parse(manifestJson) : manifestJson;
-        const activeManifest = reader.getActive();
-
-        // Determine validation status
-        // In c2pa-node, validation_status is part of the manifest store
-        const validationStatus = parsed.validation_status || [];
-        const signatureValid = validationStatus.length === 0;
-
-        // Parse the provenance chain for timeline visualization
-        const provenanceChain = parseProvenanceChain(parsed, validationStatus);
+      if (req.query.simulate === 'true') {
+        // Simulate C2PA manifest for standard files (Developer Mode)
+        const signatureValid = Math.random() > 0.15; // 85% chance of valid signature
+        const randHash = () => Array.from({length: 4}, () => Math.random().toString(16).substring(2)).join('').substring(0, 64);
+        
+        const provenanceChain = [
+          {
+            actionName: 'Content Created',
+            software: 'Sony ILCE-7M4',
+            softwareVersion: 'v2.01',
+            timestamp: new Date(Date.now() - 3600000 * 3).toISOString(),
+            operator: 'Field Officer Delta',
+            signatureValid: true,
+            hashAlgorithm: 'SHA-256',
+            hash: 'sha256:' + randHash(),
+          },
+          {
+            actionName: 'Color Adjusted',
+            software: 'Adobe Lightroom Mobile',
+            softwareVersion: 'v9.2.1',
+            timestamp: new Date(Date.now() - 3600000).toISOString(),
+            operator: 'Analyst Charlie',
+            signatureValid: true,
+            hashAlgorithm: 'SHA-256',
+            hash: 'sha256:' + randHash(),
+          },
+          {
+            actionName: 'Image Resized',
+            software: 'Adobe Photoshop',
+            softwareVersion: '2026 v27.4',
+            timestamp: new Date().toISOString(),
+            operator: 'System Server',
+            signatureValid: signatureValid,
+            hashAlgorithm: 'SHA-256',
+            hash: 'sha256:' + randHash(),
+          }
+        ];
 
         result = {
           ...result,
           hasManifest: true,
-          activeManifest: activeManifest || parsed.active_manifest,
-          manifestCount: Object.keys(parsed.manifests || {}).length,
-          validationStatus,
+          activeManifest: 'simulated_active_manifest',
+          manifestCount: 3,
+          validationStatus: signatureValid ? [] : [{ code: 'validation-failure', explanation: 'Manifest signature could not be verified' }],
           signatureValid,
           provenanceChain,
-          claimGenerator: activeManifest?.claim_generator || '',
+          claimGenerator: 'Sony_ILCE-7M4/2.01',
         };
 
-        console.log(
-          `[SIGNET] ✓ Manifest found: ${result.manifestCount} manifest(s), ` +
-          `signature ${signatureValid ? 'VALID' : 'INVALID'}, ` +
-          `${provenanceChain.length} action(s) in chain`
-        );
+        console.log(`[SIGNET] [SIMULATION] Generated C2PA mock manifest for ${originalname}`);
       } else {
-        console.log(`[SIGNET] ○ No C2PA manifest found in ${originalname}`);
+        // Dynamically import c2pa-node (native binary)
+        const { Reader } = await import('@contentauth/c2pa-node');
+
+        const reader = await Reader.fromAsset({
+          path: tmpPath,
+          mimeType: mimetype,
+        });
+
+        const manifestJson = reader.json();
+
+        if (manifestJson) {
+          const parsed = typeof manifestJson === 'string' ? JSON.parse(manifestJson) : manifestJson;
+          const activeManifest = reader.getActive();
+
+          // Determine validation status
+          const validationStatus = parsed.validation_status || [];
+          const signatureValid = validationStatus.length === 0;
+
+          // Parse the provenance chain for timeline visualization
+          const provenanceChain = parseProvenanceChain(parsed, validationStatus);
+
+          result = {
+            ...result,
+            hasManifest: true,
+            activeManifest: activeManifest || parsed.active_manifest,
+            manifestCount: Object.keys(parsed.manifests || {}).length,
+            validationStatus,
+            signatureValid,
+            provenanceChain,
+            claimGenerator: activeManifest?.claim_generator || '',
+          };
+
+          console.log(
+            `[SIGNET] ✓ Manifest found: ${result.manifestCount} manifest(s), ` +
+            `signature ${signatureValid ? 'VALID' : 'INVALID'}, ` +
+            `${provenanceChain.length} action(s) in chain`
+          );
+        } else {
+          console.log(`[SIGNET] ○ No C2PA manifest found in ${originalname}`);
+        }
       }
     } catch (c2paErr) {
       const errMsg = c2paErr?.message || String(c2paErr);
@@ -236,16 +293,24 @@ app.post('/api/validate', upload.single('file'), async (req, res) => {
       }
     }
 
-    // Persist to MongoDB (if connected)
-    try {
-      const record = new ValidationRecord(result);
-      await record.save();
-      result._id = record._id;
-      console.log(`[SIGNET] Saved validation record: ${record._id}`);
-    } catch (dbErr) {
-      console.warn('[SIGNET] Could not save to MongoDB:', dbErr.message);
-      // Still return the result even if DB save fails
+
+    // Persist to MongoDB (if connected) or fall back to memory
+    const useDb = isDbConnected();
+    if (useDb) {
+      try {
+        const record = new ValidationRecord(result);
+        await record.save();
+        result._id = record._id;
+        console.log(`[SIGNET] Saved validation record to MongoDB: ${record._id}`);
+      } catch (dbErr) {
+        console.warn('[SIGNET] Could not save to MongoDB, falling back to memory:', dbErr.message);
+        result._id = `temp-${Date.now()}`;
+        tempRecords.unshift(result);
+      }
+    } else {
       result._id = `temp-${Date.now()}`;
+      tempRecords.unshift(result);
+      console.log(`[SIGNET] Saved validation record to memory: ${result._id}`);
     }
 
     res.json(result);
@@ -267,32 +332,178 @@ app.post('/api/validate', upload.single('file'), async (req, res) => {
   }
 });
 
+// POST /api/validate-sample — Ingest a pre-configured sample C2PA evidence file for testing
+app.post('/api/validate-sample', async (req, res) => {
+  const sampleNum = Math.floor(Math.random() * 3) + 1;
+  let sampleResult;
+
+  const randHash = () => Array.from({length: 4}, () => Math.random().toString(16).substring(2)).join('').substring(0, 64);
+
+  if (sampleNum === 1) {
+    sampleResult = {
+      fileName: 'forensic_sample_alpha.jpg',
+      fileSize: 2405912,
+      mimeType: 'image/jpeg',
+      hasManifest: true,
+      activeManifest: 'forensic_sample_alpha.jpg',
+      manifestCount: 3,
+      validationStatus: [],
+      signatureValid: true,
+      claimGenerator: 'Canon_EOS_R5/1.8.1',
+      provenanceChain: [
+        {
+          actionName: 'Content Created',
+          software: 'Canon EOS R5',
+          softwareVersion: 'v1.8.1',
+          timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
+          operator: 'Special Agent Miller (ID 849)',
+          signatureValid: true,
+          hashAlgorithm: 'SHA-256',
+          hash: 'sha256:' + randHash(),
+        },
+        {
+          actionName: 'Image Cropped',
+          software: 'Adobe Photoshop',
+          softwareVersion: '2026 v27.4',
+          timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
+          operator: 'Analyst Bravo',
+          signatureValid: true,
+          hashAlgorithm: 'SHA-256',
+          hash: 'sha256:' + randHash(),
+        },
+        {
+          actionName: 'Secure Forensic Seal',
+          software: 'SIGNET Analysis Engine',
+          softwareVersion: 'v0.2.0',
+          timestamp: new Date().toISOString(),
+          operator: 'System Agent',
+          signatureValid: true,
+          hashAlgorithm: 'SHA-256',
+          hash: 'sha256:' + randHash(),
+        }
+      ],
+      analyzedAt: new Date(),
+    };
+  } else if (sampleNum === 2) {
+    sampleResult = {
+      fileName: 'surveillance_capture_042.png',
+      fileSize: 4183204,
+      mimeType: 'image/png',
+      hasManifest: true,
+      activeManifest: 'surveillance_capture_042.png',
+      manifestCount: 2,
+      validationStatus: [{ code: 'validation-failure', explanation: 'Manifest signature is invalid: modified content' }],
+      signatureValid: false,
+      claimGenerator: 'Hikvision_DS-2CD2087G2/v5.5.8',
+      provenanceChain: [
+        {
+          actionName: 'Content Created',
+          software: 'Hikvision IP Camera',
+          softwareVersion: 'v5.5.8',
+          timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
+          operator: 'Security Terminal 4',
+          signatureValid: true,
+          hashAlgorithm: 'SHA-256',
+          hash: 'sha256:' + randHash(),
+        },
+        {
+          actionName: 'Metadata Tampered',
+          software: 'Unknown Tool',
+          softwareVersion: 'N/A',
+          timestamp: new Date().toISOString(),
+          operator: 'External Actor',
+          signatureValid: false,
+          hashAlgorithm: 'SHA-256',
+          hash: 'sha256:' + randHash(),
+        }
+      ],
+      analyzedAt: new Date(),
+    };
+  } else {
+    sampleResult = {
+      fileName: 'bodycam_footage_rec.mp4',
+      fileSize: 24501832,
+      mimeType: 'video/mp4',
+      hasManifest: true,
+      activeManifest: 'bodycam_footage_rec.mp4',
+      manifestCount: 1,
+      validationStatus: [],
+      signatureValid: true,
+      claimGenerator: 'Axon_Body_3/v1.23.4',
+      provenanceChain: [
+        {
+          actionName: 'Content Created',
+          software: 'Axon Body 3',
+          softwareVersion: 'v1.23.4',
+          timestamp: new Date(Date.now() - 3600000 * 8).toISOString(),
+          operator: 'Officer Davis (ID 7482)',
+          signatureValid: true,
+          hashAlgorithm: 'SHA-256',
+          hash: 'sha256:' + randHash(),
+        }
+      ],
+      analyzedAt: new Date(),
+    };
+  }
+
+  try {
+    const useDb = isDbConnected();
+    if (useDb) {
+      const record = new ValidationRecord(sampleResult);
+      await record.save();
+      sampleResult._id = record._id;
+    } else {
+      sampleResult._id = `temp-${Date.now()}`;
+      tempRecords.unshift(sampleResult);
+    }
+    console.log(`[SIGNET] Ingested sample C2PA record: ${sampleResult.fileName}`);
+    res.json(sampleResult);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to ingest sample validation record' });
+  }
+});
+
 // GET /api/validations — Retrieve past validation records
 app.get('/api/validations', async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-    const records = await ValidationRecord.find()
-      .sort({ analyzedAt: -1 })
-      .limit(limit)
-      .lean();
-    res.json(records);
-  } catch (err) {
-    console.warn('[SIGNET] Could not fetch validations:', err.message);
-    res.json([]); // Return empty array if DB is not available
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+
+  if (isDbConnected()) {
+    try {
+      const records = await ValidationRecord.find()
+        .sort({ analyzedAt: -1 })
+        .limit(limit)
+        .lean();
+      return res.json(records);
+    } catch (err) {
+      console.warn('[SIGNET] Mongoose query failed, falling back to memory:', err.message);
+    }
   }
+
+  // Return in-memory fallback
+  res.json(tempRecords.slice(0, limit));
 });
 
 // GET /api/validations/:id — Retrieve a single validation record
 app.get('/api/validations/:id', async (req, res) => {
-  try {
-    const record = await ValidationRecord.findById(req.params.id).lean();
-    if (!record) {
-      return res.status(404).json({ error: 'Validation record not found' });
+  const { id } = req.params;
+
+  if (isDbConnected() && !id.startsWith('temp-')) {
+    try {
+      const record = await ValidationRecord.findById(id).lean();
+      if (record) {
+        return res.json(record);
+      }
+    } catch (err) {
+      console.warn('[SIGNET] Mongoose findById failed, falling back to memory:', err.message);
     }
-    res.json(record);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch validation record' });
   }
+
+  // Look in temp records
+  const record = tempRecords.find(r => String(r._id) === id);
+  if (!record) {
+    return res.status(404).json({ error: 'Validation record not found' });
+  }
+  res.json(record);
 });
 
 // ── Error handling middleware ─────────────────────────────────────────

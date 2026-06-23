@@ -8,13 +8,14 @@ const API_BASE = '/api';
  * Upload a file to the backend for C2PA signature verification.
  *
  * @param {File} file - The file to validate
+ * @param {boolean} simulate - Whether to simulate C2PA metadata (Developer Mode)
  * @returns {Promise<object>} Validation result from the server
  */
-export async function validateFile(file) {
+export async function validateFile(file, simulate = false) {
   const formData = new FormData();
   formData.append('file', file);
 
-  const res = await fetch(`${API_BASE}/validate`, {
+  const res = await fetch(`${API_BASE}/validate?simulate=${simulate}`, {
     method: 'POST',
     body: formData,
   });
@@ -26,6 +27,24 @@ export async function validateFile(file) {
 
   return res.json();
 }
+
+/**
+ * Trigger mock sample C2PA file ingestion from backend for testing.
+ *
+ * @returns {Promise<object>} The mock C2PA validation record
+ */
+export async function validateSampleFile() {
+  const res = await fetch(`${API_BASE}/validate-sample`, {
+    method: 'POST',
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to load C2PA forensic sample');
+  }
+
+  return res.json();
+}
+
 
 /**
  * Fetch past validation records from the server.
