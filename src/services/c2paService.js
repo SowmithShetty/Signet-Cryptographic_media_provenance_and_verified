@@ -21,10 +21,8 @@ async function initC2pa() {
   initPromise = (async () => {
     try {
       const { createC2pa } = await import('@contentauth/c2pa-web');
-      const wasmModule = await import('@contentauth/c2pa-web/resources/c2pa.wasm?url');
-      const wasmSrc = wasmModule.default;
 
-      c2paInstance = await createC2pa({ wasmSrc });
+      c2paInstance = await createC2pa({ wasmSrc: '/c2pa_bg.wasm' });
       console.log('[SIGNET] C2PA WASM reader initialized');
       return c2paInstance;
     } catch (err) {
