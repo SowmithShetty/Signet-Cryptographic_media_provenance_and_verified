@@ -1,0 +1,184 @@
+@import "tailwindcss";
+
+/* ── SIGNET Design System ─────────────────────────────────────────── */
+
+@theme {
+  /* Monochromatic Base Palette */
+  --color-void: #000000;
+  --color-abyss: #050505;
+  --color-obsidian: #0a0a0f;
+  --color-carbon: #111118;
+  --color-graphite: #1a1a24;
+  --color-gunmetal: #23232f;
+  --color-steel: #2d2d3a;
+  --color-ash: #3a3a48;
+  --color-slate-dim: #4a4a5a;
+  --color-slate-mid: #6b6b7b;
+  --color-slate-bright: #8b8b9b;
+
+  /* Neon Accent — Emerald Cryptographic Green */
+  --color-neon: #10b981;
+  --color-neon-dim: #059669;
+  --color-neon-bright: #34d399;
+  --color-neon-glow: #10b98140;
+  --color-neon-subtle: #10b98115;
+  --color-neon-faint: #10b9810a;
+
+  /* Semantic Status Colors */
+  --color-threat: #ef4444;
+  --color-threat-dim: #ef444420;
+  --color-caution: #f59e0b;
+  --color-caution-dim: #f59e0b20;
+  --color-verified: #10b981;
+  --color-verified-dim: #10b98120;
+
+  /* Typography */
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* Spacing */
+  --sidebar-width: 260px;
+  --header-height: 56px;
+
+  /* Animation */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Global Resets & Base ─────────────────────────────────────────── */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-steel) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-steel);
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ash);
+}
+
+::selection {
+  background: var(--color-neon-glow);
+  color: var(--color-neon-bright);
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-void);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Utility Animations ──────────────────────────────────────────── */
+
+@keyframes pulse-neon {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes scan-line {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+@keyframes glow-breathe {
+  0%, 100% { box-shadow: 0 0 8px var(--color-neon-glow), 0 0 20px transparent; }
+  50% { box-shadow: 0 0 12px var(--color-neon-glow), 0 0 30px var(--color-neon-glow); }
+}
+
+@keyframes border-trace {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes terminal-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-pulse-neon {
+  animation: pulse-neon 2s ease-in-out infinite;
+}
+
+.animate-scan-line {
+  animation: scan-line 8s linear infinite;
+}
+
+.animate-glow-breathe {
+  animation: glow-breathe 3s ease-in-out infinite;
+}
+
+.animate-border-trace {
+  background-size: 200% 200%;
+  animation: border-trace 4s ease infinite;
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s var(--ease-smooth) forwards;
+}
+
+.animate-terminal-blink {
+  animation: terminal-blink 1s step-end infinite;
+}
+
+/* ── Glass Panels ────────────────────────────────────────────────── */
+
+.glass-panel {
+  background: linear-gradient(
+    135deg,
+    rgba(26, 26, 36, 0.6),
+    rgba(10, 10, 15, 0.8)
+  );
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--color-gunmetal);
+}
+
+.glass-panel-solid {
+  background: var(--color-carbon);
+  border: 1px solid var(--color-gunmetal);
+}
+
+/* ── Neon Glow Effects ───────────────────────────────────────────── */
+
+.neon-border {
+  border: 1px solid var(--color-neon-dim);
+  box-shadow: 0 0 8px var(--color-neon-glow), inset 0 0 8px var(--color-neon-faint);
+}
+
+.neon-text {
+  color: var(--color-neon);
+  text-shadow: 0 0 8px var(--color-neon-glow);
+}
+
+.neon-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-neon);
+  box-shadow: 0 0 6px var(--color-neon-glow), 0 0 12px var(--color-neon-glow);
+}
