@@ -10,7 +10,12 @@ import {
   AlertTriangle,
   Hash,
   Clock,
+  Loader2,
+  ShieldOff,
+  Eye,
 } from 'lucide-react';
+import { readManifest } from '../services/c2paService';
+import { validateFile } from '../services/apiService';
 
 const ACCEPTED_TYPES = {
   'image/jpeg': ['.jpg', '.jpeg'],
@@ -28,72 +33,145 @@ function formatFileSize(bytes) {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-function generateMockHash() {
-  const chars = '0123456789abcdef';
-  let hash = '';
-  for (let i = 0; i < 64; i++) {
-    hash += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return hash;
-}
-
 function getFileIcon(type) {
   if (type.startsWith('image/')) return FileImage;
   if (type.startsWith('video/')) return FileVideo;
   return FileImage;
 }
 
-export default function FileDropzone() {
+/**
+ * FileDropzone — Uploads files, extracts C2PA manifests via WASM,
+ * then sends to backend for cryptographic signature verification.
+ *
+ * @param {function} onValidationComplete - Callback when a file completes validation
+ */
+export default function FileDropzone({ onValidationComplete }) {
   const [files, setFiles] = useState([]);
 
-  const onDrop = useCallback((acceptedFiles, rejectedFiles) => {
-    const newFiles = acceptedFiles.map((file) => ({
-      id: crypto.randomUUID(),
-      file,
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      hash: generateMockHash(),
-      status: 'queued', // queued | processing | verified | error
-      timestamp: new Date().toISOString(),
-    }));
-
-    // Simulate processing after a delay
-    newFiles.forEach((fileEntry) => {
-      setTimeout(() => {
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.id === fileEntry.id ? { ...f, status: 'processing' } : f
-          )
-        );
-      }, 500);
-
-      setTimeout(() => {
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.id === fileEntry.id ? { ...f, status: 'verified' } : f
-          )
-        );
-      }, 2000 + Math.random() * 1500);
-    });
-
-    if (rejectedFiles.length > 0) {
-      const rejected = rejectedFiles.map((r) => ({
-        id: crypto.randomUUID(),
-        file: r.file,
-        name: r.file.name,
-        size: r.file.size,
-        type: r.file.type,
-        hash: '—',
-        status: 'error',
-        timestamp: new Date().toISOString(),
-        error: r.errors[0]?.message || 'Invalid file',
-      }));
-      setFiles((prev) => [...prev, ...rejected]);
-    }
-
-    setFiles((prev) => [...prev, ...newFiles]);
+  const updateFile = useCallback((id, updates) => {
+    setFiles((prev) =>
+      prev.map((f) => (f.id === id ? { ...f, ...updates } : f))
+    );
   }, []);
+
+  const processFile = useCallback(
+    async (fileEntry) => {
+      const { id, file } = fileEntry;
+
+      // ── Phase 1: Client-side C2PA WASM extraction ──
+      updateFile(id, { status: 'reading' });
+
+      let clientManifest = null;
+      try {
+        const result = await readManifest(file);
+        clientManifest = result.manifest;
+
+        if (!clientManifest) {
+          // No C2PA metadata found — still send to server for logging
+          updateFile(id, {
+            status: 'no-metadata',
+            c2paMessage: result.message || 'No C2PA metadata found',
+          });
+        } else {
+          updateFile(id, {
+            status: 'validating',
+            c2paMessage: 'C2PA manifest extracted, verifying signatures…',
+          });
+        }
+      } catch (wasmErr) {
+        console.warn('[SIGNET] WASM extraction failed:', wasmErr);
+        // Continue to server validation anyway
+        updateFile(id, {
+          status: 'validating',
+          c2paMessage: 'Client extraction skipped, sending to server…',
+        });
+      }
+
+      // ── Phase 2: Server-side signature verification ──
+      try {
+        updateFile(id, { status: clientManifest ? 'validating' : 'validating' });
+
+        const serverResult = await validateFile(file);
+
+        if (serverResult.hasManifest) {
+          updateFile(id, {
+            status: serverResult.signatureValid ? 'verified' : 'invalid',
+            hash: serverResult.provenanceChain?.[0]?.hash || '',
+            serverResult,
+            c2paMessage: serverResult.signatureValid
+              ? 'Signature cryptographically verified'
+              : `Signature invalid: ${serverResult.validationStatus?.length || 0} issue(s)`,
+          });
+        } else {
+          updateFile(id, {
+            status: 'no-metadata',
+            serverResult,
+            c2paMessage: 'No C2PA manifest embedded in this file',
+          });
+        }
+
+        // Notify parent
+        if (onValidationComplete) {
+          onValidationComplete(serverResult);
+        }
+      } catch (serverErr) {
+        console.error('[SIGNET] Server validation failed:', serverErr);
+        updateFile(id, {
+          status: clientManifest ? 'verified' : 'error',
+          error: `Server validation failed: ${serverErr.message}`,
+          c2paMessage: clientManifest
+            ? 'Client-side extraction succeeded but server verification unavailable'
+            : serverErr.message,
+        });
+      }
+    },
+    [updateFile, onValidationComplete]
+  );
+
+  const onDrop = useCallback(
+    (acceptedFiles, rejectedFiles) => {
+      // Handle rejected files
+      if (rejectedFiles.length > 0) {
+        const rejected = rejectedFiles.map((r) => ({
+          id: crypto.randomUUID(),
+          file: r.file,
+          name: r.file.name,
+          size: r.file.size,
+          type: r.file.type,
+          hash: '',
+          status: 'error',
+          timestamp: new Date().toISOString(),
+          error: r.errors[0]?.message || 'Invalid file',
+          c2paMessage: null,
+          serverResult: null,
+        }));
+        setFiles((prev) => [...prev, ...rejected]);
+      }
+
+      // Handle accepted files
+      const newFiles = acceptedFiles.map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        hash: '',
+        status: 'queued',
+        timestamp: new Date().toISOString(),
+        error: null,
+        c2paMessage: null,
+        serverResult: null,
+      }));
+
+      setFiles((prev) => [...prev, ...newFiles]);
+
+      // Start processing each file
+      newFiles.forEach((fileEntry) => {
+        processFile(fileEntry);
+      });
+    },
+    [processFile]
+  );
 
   const removeFile = useCallback((id) => {
     setFiles((prev) => prev.filter((f) => f.id !== id));
@@ -186,7 +264,7 @@ export default function FileDropzone() {
                 ▶ RELEASE TO INGEST
               </p>
               <p className="text-xs text-[var(--color-neon)]">
-                Evidence will be hashed and queued for analysis
+                Evidence will be scanned for C2PA manifests and verified
               </p>
             </>
           ) : (
@@ -259,7 +337,9 @@ function FileCard({ fileEntry, index, onRemove }) {
   const Icon = getFileIcon(fileEntry.type);
   const isError = fileEntry.status === 'error';
   const isVerified = fileEntry.status === 'verified';
-  const isProcessing = fileEntry.status === 'processing';
+  const isProcessing = fileEntry.status === 'reading' || fileEntry.status === 'validating';
+  const isNoMetadata = fileEntry.status === 'no-metadata';
+  const isInvalid = fileEntry.status === 'invalid';
 
   return (
     <div
@@ -270,14 +350,20 @@ function FileCard({ fileEntry, index, onRemove }) {
         {/* File icon */}
         <div className={`
           w-9 h-9 rounded-lg flex items-center justify-center shrink-0
-          ${isError
+          ${isError || isInvalid
             ? 'bg-[var(--color-threat-dim)]'
             : isVerified
               ? 'bg-[var(--color-verified-dim)]'
-              : 'bg-[var(--color-graphite)]'
+              : isNoMetadata
+                ? 'bg-[var(--color-graphite)]'
+                : 'bg-[var(--color-graphite)]'
           }
         `}>
-          <Icon className={`w-4 h-4 ${isError ? 'text-[var(--color-threat)]' : isVerified ? 'text-[var(--color-neon)]' : 'text-[var(--color-slate-dim)]'}`} />
+          <Icon className={`w-4 h-4 ${
+            isError || isInvalid ? 'text-[var(--color-threat)]'
+            : isVerified ? 'text-[var(--color-neon)]'
+            : 'text-[var(--color-slate-dim)]'
+          }`} />
         </div>
 
         {/* File info */}
@@ -294,7 +380,7 @@ function FileCard({ fileEntry, index, onRemove }) {
               {formatFileSize(fileEntry.size)}
             </span>
 
-            {fileEntry.hash !== '—' && (
+            {fileEntry.hash && (
               <div className="flex items-center gap-1">
                 <Hash className="w-2.5 h-2.5 text-[var(--color-ash)]" />
                 <span className="text-[10px] text-[var(--color-ash)] truncate max-w-[180px]" style={{ fontFamily: 'var(--font-mono)' }}>
@@ -310,6 +396,18 @@ function FileCard({ fileEntry, index, onRemove }) {
               </span>
             </div>
           </div>
+
+          {/* C2PA status message */}
+          {fileEntry.c2paMessage && (
+            <p className={`mt-1.5 text-[10px] ${
+              isVerified ? 'text-[var(--color-neon-dim)]'
+              : isInvalid ? 'text-[var(--color-threat)]'
+              : isNoMetadata ? 'text-[var(--color-slate-dim)]'
+              : 'text-[var(--color-caution)]'
+            }`} style={{ fontFamily: 'var(--font-mono)' }}>
+              {fileEntry.c2paMessage}
+            </p>
+          )}
 
           {/* Processing bar */}
           {isProcessing && (
@@ -345,8 +443,11 @@ function FileCard({ fileEntry, index, onRemove }) {
 function StatusBadge({ status }) {
   const config = {
     queued: { label: 'QUEUED', color: 'text-[var(--color-slate-dim)]', bg: 'bg-[var(--color-graphite)]', border: 'border-[var(--color-gunmetal)]' },
-    processing: { label: 'HASHING', color: 'text-[var(--color-caution)]', bg: 'bg-[var(--color-caution-dim)]', border: 'border-[var(--color-caution)]/30', icon: null },
+    reading: { label: 'EXTRACTING', color: 'text-[var(--color-caution)]', bg: 'bg-[var(--color-caution-dim)]', border: 'border-[var(--color-caution)]/30' },
+    validating: { label: 'VERIFYING', color: 'text-[var(--color-caution)]', bg: 'bg-[var(--color-caution-dim)]', border: 'border-[var(--color-caution)]/30' },
     verified: { label: 'VERIFIED', color: 'text-[var(--color-neon)]', bg: 'bg-[var(--color-verified-dim)]', border: 'border-[var(--color-neon-dim)]' },
+    invalid: { label: 'SIG INVALID', color: 'text-[var(--color-threat)]', bg: 'bg-[var(--color-threat-dim)]', border: 'border-[var(--color-threat)]/30' },
+    'no-metadata': { label: 'NO C2PA', color: 'text-[var(--color-slate-dim)]', bg: 'bg-[var(--color-graphite)]', border: 'border-[var(--color-gunmetal)]' },
     error: { label: 'REJECTED', color: 'text-[var(--color-threat)]', bg: 'bg-[var(--color-threat-dim)]', border: 'border-[var(--color-threat)]/30' },
   };
 
@@ -358,8 +459,12 @@ function StatusBadge({ status }) {
       style={{ fontFamily: 'var(--font-mono)' }}
     >
       {status === 'verified' && <CheckCircle2 className="w-2.5 h-2.5" />}
+      {status === 'invalid' && <AlertTriangle className="w-2.5 h-2.5" />}
       {status === 'error' && <AlertTriangle className="w-2.5 h-2.5" />}
-      {status === 'processing' && <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-caution)] animate-pulse-neon" />}
+      {status === 'no-metadata' && <ShieldOff className="w-2.5 h-2.5" />}
+      {(status === 'reading' || status === 'validating') && (
+        <Loader2 className="w-2.5 h-2.5 animate-spin" />
+      )}
       {c.label}
     </span>
   );
