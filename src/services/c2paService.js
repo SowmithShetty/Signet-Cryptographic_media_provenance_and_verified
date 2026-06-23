@@ -45,10 +45,11 @@ export async function readManifest(file) {
   try {
     const c2pa = await initC2pa();
 
-    // The browser SDK uses .read(file) directly for Blobs and Files
-    const manifestStore = await c2pa.read(file);
-
-    if (!manifestStore || !manifestStore.activeManifest) {
+    // The browser SDK uses c2pa.reader.fromBlob to extract the manifest reader
+    const reader = await c2pa.reader.fromBlob(file.type, file);
+    
+    // If no C2PA metadata is embedded, fromBlob returns null (does not throw)
+    if (!reader) {
       return {
         manifest: null,
         error: null,
@@ -56,16 +57,31 @@ export async function readManifest(file) {
       };
     }
 
+    const manifestStore = await reader.manifestStore();
+    const active = await reader.activeManifest();
+    
+    // Free the WASM reader allocations immediately to avoid memory leaks
+    await reader.free();
+
+    if (!manifestStore || !active) {
+      return {
+        manifest: null,
+        error: null,
+        message: 'No active C2PA manifest found in this file',
+      };
+    }
+
     // Compile structured metadata from the WASM client-side validation
-    const active = manifestStore.activeManifest;
     const manifests = manifestStore.manifests || {};
     const manifestsArray = Object.values(manifests);
     const signatureValid = manifestStore.validationStatus?.length === 0;
 
     const chain = [];
     manifestsArray.forEach((manifest, index) => {
-      // Extract actions from assertions if available
-      const actions = manifest.assertions?.get('c2pa.actions')?.data?.actions || [];
+      // Find assertions (assertions is an array in typescript bindings)
+      const assertions = manifest.assertions || [];
+      const actionsAssertion = assertions.find(a => a.label === 'c2pa.actions' || a.label === 'c2pa.actions.v2');
+      const actions = actionsAssertion?.data?.actions || [];
       
       if (actions.length > 0) {
         actions.forEach((action) => {
