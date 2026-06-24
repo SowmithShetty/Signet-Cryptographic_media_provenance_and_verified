@@ -1,7 +1,7 @@
 import fs from 'fs';
 
 try {
-  const buf = fs.readFileSync('adobe-20220124-A.jpg');
+  const buf = fs.readFileSync('nikon-20221019-building.jpeg');
   console.log('File size:', buf.length, 'bytes');
   
   // Search for typical C2PA/JUMBF patterns
